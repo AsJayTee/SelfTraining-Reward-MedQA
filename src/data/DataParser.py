@@ -11,6 +11,7 @@ import re
 class DataParser:
     """
     A class to parse MedQuAD XML files and extract Q&A data into a structured format.
+    It also parses test questions and generates test_qna.json with risk levels
     Includes answer recovery functionality for problematic folders.
     """
     
@@ -30,11 +31,12 @@ class DataParser:
         self.folders_needing_recovery = {"10_MPlus_ADAM_QA", "11_MPlusDrugs_QA", "12_MPlusHerbsSupplements_QA"}
         self.question_counter = 0  # Simple incrementing counter for unique IDs
         
-        # Risk level mapping based on question type
+        # Enhanced risk level mapping based on question type - covers all 25 test question types
         self.question_type_risk_mapping = {
-            # High Risk (3.0x penalty) 
+            # High Risk (3.0x penalty) - Critical medical decisions, treatments, drug interactions, dosing
             "treatment": "High Risk",
             "side effects": "High Risk",
+            "side_effect": "High Risk",  # Test dataset format
             "emergency or overdose": "High Risk",
             "severe reaction": "High Risk",
             "contraindication": "High Risk",
@@ -43,24 +45,37 @@ class DataParser:
             "important warning": "High Risk",
             "indication": "High Risk",
             "precautions": "High Risk",
+            "interaction": "High Risk",  # Drug interactions are dangerous
+            "tapering": "High Risk",     # Medication tapering is critical
+            "dosage": "High Risk",       # Medication dosing is critical
             
-            # Medium Risk (2.0x penalty)
+            # Medium Risk (2.0x penalty) - Medical assessment, diagnosis, symptoms, complications
             "symptoms": "Medium Risk",
+            "symptom": "Medium Risk",    # Test dataset format
             "causes": "Medium Risk",
+            "cause": "Medium Risk",      # Test dataset format
             "outlook": "Medium Risk",
             "considerations": "Medium Risk",
             "when to contact a medical professional": "Medium Risk",
             "complications": "Medium Risk",
+            "complication": "Medium Risk", # Test dataset format
             "exams and tests": "Medium Risk",
             "susceptibility": "Medium Risk",
             "storage and disposal": "Medium Risk",
+            "storage_disposal": "Medium Risk", # Test dataset format
             "brand names of combination products": "Medium Risk",
             "stages": "Medium Risk",
             "genetic changes": "Medium Risk",
             "inheritance": "Medium Risk",
             "frequency": "Medium Risk",
+            "diagnosis": "Medium Risk",   # Medical assessment
+            "effect": "Medium Risk",      # Medical effects
+            "prognosis": "Medium Risk",   # Medical outlook
+            "action": "Medium Risk",      # Medical actions
+            "comparison": "Medium Risk",  # Comparing treatments/conditions
+            "other_question": "Medium Risk", # Default for unknown medical questions
             
-            # Low Risk (1.0x penalty) 
+            # Low Risk (1.0x penalty) - Informational, educational, general guidance
             "information": "Low Risk",
             "support groups": "Low Risk",
             "prevention": "Low Risk",
@@ -69,7 +84,10 @@ class DataParser:
             "brand names": "Low Risk",
             "why get vaccinated": "Low Risk",
             "how can i learn more": "Low Risk",
-            "research": "Low Risk"
+            "research": "Low Risk",
+            "ingredient": "Low Risk",     # Informational about ingredients
+            "person_organization": "Low Risk", # Finding doctors/organizations
+            "lifestyle_diet": "Low Risk", # General lifestyle advice
         }
         
         # Auto-load answer recovery data
@@ -113,60 +131,60 @@ class DataParser:
         Extract the answer recovery ZIP file if not already extracted.
         
         Returns:
-            Optional[Path]: Path to the extracted CSV file, or None if not found
+            Optional[Path]: Path to the extracted directory, or None if failed
         """
-        zip_path = self.data_root / "QA-TestSet-LiveQA-Med-Qrels-2479-Answers.zip"
-        csv_path = self.data_root / "QA-TestSet-LiveQA-Med-Qrels-2479-Answers" / "QA-TestSet-LiveQA-Med-Qrels-2479-Answers" / "All-2479-Answers-retrieved-from-MedQuAD.csv"
+        zip_file_path = Path("data/raw/MedQuAD/QA-TestSet-LiveQA-Med-Qrels-2479-Answers.zip")
         
-        # Check if CSV already exists
-        if csv_path.exists():
-            if self.verbose:
-                self.logger.info(f"Answer recovery CSV already exists: {csv_path}")
-            return csv_path
-        
-        # Check if ZIP exists
-        if not zip_path.exists():
-            self.logger.warning(f"Answer recovery ZIP file not found: {zip_path}")
+        if not zip_file_path.exists():
+            self.logger.warning(f"ZIP file not found: {zip_file_path}")
             return None
+            
+        # Check if already extracted
+        expected_extract_dir = zip_file_path.parent / "QA-TestSet-LiveQA-Med-Qrels-2479-Answers"
+        if expected_extract_dir.exists():
+            self.logger.debug("ZIP file already extracted")
+            return expected_extract_dir
         
         try:
-            self.logger.info(f"Extracting answer recovery data...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(self.data_root)
-            
-            if csv_path.exists():
-                self.logger.info(f"Successfully extracted answer recovery data")
-                return csv_path
-            else:
-                self.logger.error(f"CSV file not found after extraction")
-                return None
-                
+            self.logger.info("Extracting answer recovery ZIP file...")
+            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+                zip_ref.extractall(zip_file_path.parent)
+            self.logger.info(f"Extracted ZIP file to: {expected_extract_dir}")
+            return expected_extract_dir
         except Exception as e:
-            self.logger.error(f"Error extracting ZIP file: {e}")
+            self.logger.error(f"Failed to extract ZIP file: {e}")
             return None
     
     def _load_answer_recovery_data(self) -> None:
         """
-        Load answer recovery data from the CSV file.
+        Load the answer recovery CSV file into a dictionary for quick lookups.
         """
-        csv_path = self._extract_zip_if_needed()
-        if not csv_path:
-            self.logger.warning("Answer recovery data not available")
+        # Extract ZIP file if needed
+        extract_dir = self._extract_zip_if_needed()
+        if not extract_dir:
+            self.logger.warning("Could not load answer recovery data - extraction failed")
+            return
+            
+        # Try to find the CSV file
+        csv_file_path = extract_dir / "All-2479-Answers-retrieved-from-MedQuAD.csv"
+        
+        if not csv_file_path.exists():
+            self.logger.warning(f"Answer recovery CSV not found: {csv_file_path}")
             return
         
         try:
-            with open(csv_path, 'r', encoding='utf-8') as csvfile:
+            self.answer_recovery_map = {}
+            with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
-                
                 for row in reader:
                     answer_id = row.get('AnswerID', '').strip()
                     answer_text = row.get('Answer', '').strip()
                     
                     if answer_id and answer_text:
-                        # Extract the answer part after "Answer:"
-                        recovered_answer = self._extract_answer_from_recovery_text(answer_text)
-                        if recovered_answer:
-                            self.answer_recovery_map[answer_id] = recovered_answer
+                        # Parse the answer to extract just the answer part
+                        parsed_answer = self._extract_answer_from_recovery_text(answer_text)
+                        if parsed_answer:
+                            self.answer_recovery_map[answer_id] = parsed_answer
             
             self.logger.info(f"Loaded {len(self.answer_recovery_map)} answer recovery entries")
             
@@ -175,7 +193,7 @@ class DataParser:
     
     def _extract_answer_from_recovery_text(self, text: str) -> Optional[str]:
         """
-        Extract the answer portion from the recovery text format.
+        Extract the answer text from the full recovery text format.
         
         Args:
             text (str): Full recovery text containing question, URL, and answer
@@ -201,65 +219,46 @@ class DataParser:
         Generate a recovery key that might match entries in the CSV file.
         
         Args:
-            xml_path (Path): Path to the XML file
-            qa_pair_element: XML element containing the QA pair
+            xml_path (Path): Path to the XML file being processed
+            qa_pair_element: QAPair XML element
             
         Returns:
-            Optional[str]: Recovery key to look up in the answer recovery map
+            Optional[str]: Recovery key to look up in answer_recovery_map
         """
-        # Extract the base filename without extension
+        # Extract file name without path and extension
         base_filename = xml_path.stem
         
-        # Get the QA pair ID
+        # Get the pid from the QAPair element
         pid = qa_pair_element.get('pid', '1')
         
-        # Try different key formats that might be in the CSV based on the folder
-        possible_keys = []
-        
-        if "10_MPlus_ADAM_QA" in str(xml_path):
-            # ADAM format
-            possible_keys.extend([
-                f"ADAM_{base_filename}_Sec{pid}.txt",
-                f"ADAM_{base_filename}_{pid}.txt",
-                f"ADAM_{base_filename}.txt"
-            ])
-        elif "11_MPlusDrugs_QA" in str(xml_path):
-            # MPlusDrugs format
-            possible_keys.extend([
-                f"MPlusDrugs_{base_filename}_Sec{pid}.txt",
-                f"MPlusDrugs_{base_filename}_{pid}.txt",
-                f"MPlusDrugs_{base_filename}.txt"
-            ])
-        elif "12_MPlusHerbsSupplements_QA" in str(xml_path):
-            # MPlus format for herbs/supplements
-            possible_keys.extend([
-                f"MPlus_{base_filename}_Sec{pid}.txt",
-                f"MPlus_{base_filename}_{pid}.txt",
-                f"MPlus_{base_filename}.txt",
-                f"MPlusHerbsSupplements_{base_filename}_Sec{pid}.txt",
-                f"MPlusHerbsSupplements_{base_filename}_{pid}.txt",
-                f"MPlusHerbsSupplements_{base_filename}.txt"
-            ])
-        
-        # Also try generic formats
-        possible_keys.extend([
+        # Try different key formats that might match the CSV
+        possible_keys = [
             f"{base_filename}_Sec{pid}.txt",
+            f"{base_filename}_Sec{pid}",
             f"{base_filename}_{pid}.txt",
-            f"{base_filename}.txt"
-        ])
+            f"{base_filename}_{pid}",
+            f"{base_filename}.txt",
+            base_filename
+        ]
         
-        # Check which key exists in our recovery map
+        # Try each possible key format
         for key in possible_keys:
             if key in self.answer_recovery_map:
-                if self.verbose:
-                    self.logger.debug(f"Found matching key: {key} for file {xml_path.name}")
                 return key
         
         return None
     
+    def clear_parsed_data(self) -> None:
+        """
+        Clear the parsed data and reset the counter.
+        """
+        self.parsed_data = {"unlabeled_qa_examples": []}
+        self.question_counter = 0  # Reset counter when clearing data
+        self.logger.info("Parsed data cleared and counter reset")
+    
     def _get_next_question_id(self) -> str:
         """
-        Generate the next unique question ID.
+        Get the next unique question ID.
         
         Returns:
             str: Next question ID (Q1, Q2, Q3, etc.)
@@ -324,32 +323,31 @@ class DataParser:
                     answer_element = qa_pair.find('Answer')
                     
                     if question_element is not None:
-                        question_text = question_element.text or ''
-                        question_type = question_element.get('qtype', 'information')
+                        question_text = question_element.text.strip() if question_element.text else ""
+                        answer_text = answer_element.text.strip() if answer_element is not None and answer_element.text else ""
                         
-                        # Clean up question text
-                        question_text = ' '.join(question_text.split())
-                        
-                        # Handle answer text
-                        answer_text = ''
+                        # Check for answer recovery if needed
                         answer_recovered = False
-                        
-                        if answer_element is not None and answer_element.text:
-                            # Answer exists in XML
-                            answer_text = ' '.join(answer_element.text.split())
-                        elif needs_recovery:
-                            # Try to recover answer from CSV data
+                        if not answer_text and needs_recovery:
                             recovery_key = self._get_recovery_key_from_xml_path(file_path, qa_pair)
-                            if recovery_key and recovery_key in self.answer_recovery_map:
-                                answer_text = self.answer_recovery_map[recovery_key]
-                                answer_recovered = True
-                                recovered_count += 1
+                            if recovery_key:
+                                recovered_answer = self.answer_recovery_map.get(recovery_key)
+                                if recovered_answer:
+                                    answer_text = recovered_answer
+                                    answer_recovered = True
+                                    recovered_count += 1
                         
-                        # Only include Q&A pairs that have both question and answer
+                        # Extract question type
+                        question_type = "unknown"
+                        question_type_element = question_element.get('qtype')
+                        if question_type_element:
+                            question_type = question_type_element
+                        
+                        # Get risk level
+                        risk_level = self._get_risk_level(question_type)
+                        
+                        # Only add if both question and answer exist
                         if question_text and answer_text:
-                            # Get risk level based on question type
-                            risk_level = self._get_risk_level(question_type)
-                            
                             qa_example = {
                                 "id": self._get_next_question_id(),  # Simple incrementing ID
                                 "question": question_text,
@@ -577,70 +575,256 @@ class DataParser:
         Returns:
             Dict[str, Any]: Recovery statistics
         """
-        recovery_stats = {
-            "total_recovery_entries": len(self.answer_recovery_map),
-            "folders_with_recovery": list(self.folders_needing_recovery),
+        return {
+            "recovery_entries_loaded": len(self.answer_recovery_map),
+            "folders_needing_recovery": list(self.folders_needing_recovery),
             "recovery_available": len(self.answer_recovery_map) > 0
         }
-        
-        if self.answer_recovery_map:
-            # Analyze recovery entries by source type
-            recovery_by_source = {}
-            for key in self.answer_recovery_map.keys():
-                if key.startswith('ADAM_'):
-                    source = 'ADAM'
-                elif key.startswith('MPlusDrugs_'):
-                    source = 'MPlusDrugs'
-                elif key.startswith('MPlus'):
-                    source = 'MPlus'
-                else:
-                    source = 'Other'
-                
-                recovery_by_source[source] = recovery_by_source.get(source, 0) + 1
-            
-            recovery_stats["recovery_entries_by_source"] = recovery_by_source
-        
-        return recovery_stats
     
-    def debug_recovery_keys(self, sample_xml_files: List[str] = None) -> None:
+    def _parse_test_questions_xml(self, xml_path: Path) -> Dict[str, Dict]:
         """
-        Debug function to understand the key matching process.
+        Parse the TREC-2017-LiveQA-Medical-Test.xml file to extract test questions.
         
         Args:
-            sample_xml_files: List of XML filenames to debug, or None for automatic selection
+            xml_path (Path): Path to the test questions XML file
+            
+        Returns:
+            Dict[str, Dict]: Dictionary mapping question IDs to question data
         """
-        print("=== RECOVERY KEY DEBUGGING ===")
-        
-        if not self.answer_recovery_map:
-            print("No recovery data loaded!")
-            return
-        
-        # Show recovery map statistics
-        print(f"Total recovery entries: {len(self.answer_recovery_map)}")
-        
-        # Group keys by pattern
-        patterns = {}
-        for key in self.answer_recovery_map.keys():
-            if key.startswith('ADAM_'):
-                patterns.setdefault('ADAM', []).append(key)
-            elif key.startswith('MPlusDrugs_'):
-                patterns.setdefault('MPlusDrugs', []).append(key)
-            elif key.startswith('MPlus'):
-                patterns.setdefault('MPlus', []).append(key)
-            else:
-                patterns.setdefault('Other', []).append(key)
-        
-        for pattern, keys in patterns.items():
-            print(f"{pattern} keys: {len(keys)} entries")
-            print(f"  Sample: {keys[:3]}")
-        
-        print("=== END RECOVERY KEY DEBUGGING ===")
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            questions = {}
+            
+            for nlm_question in root.findall('NLM-QUESTION'):
+                qid = nlm_question.get('qid')
+                if not qid:
+                    continue
+                
+                # Get the NIST paraphrase (preferred) or original question
+                nist_paraphrase = nlm_question.find('NIST-PARAPHRASE')
+                question_text = ""
+                if nist_paraphrase is not None and nist_paraphrase.text:
+                    question_text = nist_paraphrase.text.strip()
+                else:
+                    # Fallback to original question
+                    original_question = nlm_question.find('Original-Question')
+                    if original_question is not None:
+                        message = original_question.find('MESSAGE')
+                        if message is not None and message.text:
+                            question_text = message.text.strip()
+                
+                # Extract annotations
+                annotations = nlm_question.find('ANNOTATIONS')
+                focuses = []
+                question_type = "unknown"
+                
+                if annotations is not None:
+                    # Get focuses
+                    for focus in annotations.findall('FOCUS'):
+                        focus_text = focus.text.strip() if focus.text else ""
+                        focus_category = focus.get('fcategory', '')
+                        if focus_text:
+                            focuses.append({
+                                "id": focus.get('fid', ''),
+                                "text": focus_text,
+                                "category": focus_category
+                            })
+                    
+                    # Get question type
+                    type_elem = annotations.find('TYPE')
+                    if type_elem is not None and type_elem.text:
+                        question_type = type_elem.text.strip()
+                
+                questions[qid] = {
+                    "id": qid,
+                    "question": question_text,
+                    "question_type": question_type,
+                    "focuses": focuses
+                }
+            
+            self.logger.info(f"Parsed {len(questions)} test questions from XML")
+            return questions
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing test questions XML {xml_path}: {e}")
+            return {}
     
-    def clear_data(self) -> None:
-        """Clear the parsed data and reset counter."""
-        self.parsed_data = {"unlabeled_qa_examples": []}
-        self.question_counter = 0  # Reset counter when clearing data
-        self.logger.info("Parsed data cleared and counter reset")
+    def _parse_qrels_file(self, qrels_path: Path) -> Dict[str, List[Dict]]:
+        """
+        Parse the qrels file to get question-answer mappings with ratings.
+        
+        Args:
+            qrels_path (Path): Path to the qrels file
+            
+        Returns:
+            Dict[str, List[Dict]]: Dictionary mapping question IDs to answer ratings
+        """
+        try:
+            qrels_data = {}
+            
+            with open(qrels_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        # Map numeric question ID to TQ format (1 -> TQ1, 2 -> TQ2, etc.)
+                        numeric_qid = parts[0]
+                        question_id = f"TQ{numeric_qid}"
+                        
+                        rating = parts[1]
+                        answer_id = parts[2]
+                        
+                        if question_id not in qrels_data:
+                            qrels_data[question_id] = []
+                        
+                        qrels_data[question_id].append({
+                            "answer_id": answer_id,
+                            "rating": rating
+                        })
+            
+            self.logger.info(f"Parsed {len(qrels_data)} question-answer mappings from qrels")
+            return qrels_data
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing qrels file {qrels_path}: {e}")
+            return {}
+    
+    def _parse_answers_csv(self, csv_path: Path) -> Dict[str, str]:
+        """
+        Parse the answers CSV file to get answer texts.
+        
+        Args:
+            csv_path (Path): Path to the answers CSV file
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping answer IDs to answer texts
+        """
+        try:
+            answers = {}
+            
+            with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    answer_id = row.get('AnswerID', '').strip()
+                    answer_text = row.get('Answer', '').strip()
+                    
+                    if answer_id and answer_text:
+                        # Extract just the answer part (after "Answer: " and before closing parentheses)
+                        parsed_answer = self._extract_answer_from_recovery_text(answer_text)
+                        if parsed_answer:
+                            answers[answer_id] = parsed_answer
+            
+            self.logger.info(f"Parsed {len(answers)} answers from CSV")
+            return answers
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing answers CSV {csv_path}: {e}")
+            return {}
+    
+    def generate_test_qna_json(self, output_path: str = "data/processed/test_qna.json") -> None:
+        """
+        Generate the test QnA JSON file by combining data from test questions XML,
+        qrels file, and answers CSV. Includes risk levels for each question.
+        
+        Args:
+            output_path (str): Path where to save the test QnA JSON file
+        """
+        try:
+            # Define file paths
+            test_xml_path = Path("data/raw/TestQuestions/TestDataset/TREC-2017-LiveQA-Medical-Test.xml")
+            qrels_path = Path("data/raw/MedQuAD/QA-TestSet-LiveQA-Med-Qrels-2479-Answers/All-qrels_LiveQAMed2017-TestQuestions_2479_Judged-Answers.txt")
+            answers_csv_path = Path("data/raw/MedQuAD/QA-TestSet-LiveQA-Med-Qrels-2479-Answers/All-2479-Answers-retrieved-from-MedQuAD.csv")
+            
+            # Check if files exist
+            if not test_xml_path.exists():
+                self.logger.error(f"Test questions XML not found: {test_xml_path}")
+                return
+            
+            if not qrels_path.exists():
+                self.logger.error(f"Qrels file not found: {qrels_path}")
+                return
+            
+            if not answers_csv_path.exists():
+                self.logger.error(f"Answers CSV not found: {answers_csv_path}")
+                return
+            
+            self.logger.info("Starting test QnA generation...")
+            
+            # Parse all data sources
+            questions = self._parse_test_questions_xml(test_xml_path)
+            qrels = self._parse_qrels_file(qrels_path)
+            answers = self._parse_answers_csv(answers_csv_path)
+            
+            # Combine the data
+            test_qna_data = []
+            
+            for qid, question_data in questions.items():
+                # Get answers and ratings for this question
+                question_answers = []
+                if qid in qrels:
+                    for qrel in qrels[qid]:
+                        answer_id = qrel["answer_id"]
+                        rating = qrel["rating"]
+                        
+                        # Get the answer text
+                        answer_text = answers.get(answer_id, "")
+                        if answer_text:
+                            question_answers.append({
+                                "answer_id": answer_id,
+                                "answer_text": answer_text,
+                                "rating": rating
+                            })
+                
+                # Get risk level for this question type
+                risk_level = self._get_risk_level(question_data["question_type"])
+                
+                # Create the combined entry with risk level
+                test_entry = {
+                    "id": question_data["id"],
+                    "question": question_data["question"],
+                    "question_type": question_data["question_type"],
+                    "risk_level": risk_level,
+                    "focuses": question_data["focuses"],
+                    "answers": question_answers
+                }
+                
+                test_qna_data.append(test_entry)
+            
+            # Create output directory if it doesn't exist
+            output_file = Path(output_path)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save to JSON file
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(test_qna_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"Test QnA data saved to: {output_path}")
+            self.logger.info(f"Generated {len(test_qna_data)} test question entries")
+            
+            # Print summary statistics
+            total_answers = sum(len(entry["answers"]) for entry in test_qna_data)
+            self.logger.info(f"Total answers across all questions: {total_answers}")
+            
+            # Count by rating
+            rating_counts = {}
+            for entry in test_qna_data:
+                for answer in entry["answers"]:
+                    rating = answer["rating"]
+                    rating_counts[rating] = rating_counts.get(rating, 0) + 1
+            
+            self.logger.info(f"Answer rating distribution: {rating_counts}")
+            
+            # Count by risk level
+            risk_counts = {}
+            for entry in test_qna_data:
+                risk_level = entry["risk_level"]
+                risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
+            
+            self.logger.info(f"Question risk level distribution: {risk_counts}")
+            
+        except Exception as e:
+            self.logger.error(f"Error generating test QnA JSON: {e}")
 
 
 # Example usage
@@ -648,13 +832,16 @@ if __name__ == "__main__":
     # Initialize the parser with clean logging (set verbose=True for detailed debugging)
     parser = DataParser(verbose=False)
     
+    # Generate test QnA JSON file with risk levels
+    parser.generate_test_qna_json()
+    
     # Get recovery statistics
-    recovery_stats = parser.get_recovery_statistics()
-    print("Answer Recovery Statistics:")
-    print(json.dumps(recovery_stats, indent=2))
+    # recovery_stats = parser.get_recovery_statistics()
+    # print("Answer Recovery Statistics:")
+    # print(json.dumps(recovery_stats, indent=2))
     
     # Parse all XML files in the MedQuAD directory
-    parser.parse_directory()
+    # parser.parse_directory()
     
     # Or parse specific subdirectories (including those needing recovery)
     # parser.parse_specific_subdirectories(['10_MPlus_ADAM_QA', '11_MPlusDrugs_QA', '12_MPlusHerbsSupplements_QA'])
@@ -665,4 +852,4 @@ if __name__ == "__main__":
     # print(json.dumps(stats, indent=2))
     
     # Save to SQLite database
-    parser.save_to_database("data/processed/unlabeled_qa.db")
+    # parser.save_to_database("data/processed/unlabeled_qa.db")
