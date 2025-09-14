@@ -841,7 +841,7 @@ if __name__ == "__main__":
     # print(json.dumps(recovery_stats, indent=2))
     
     # Parse all XML files in the MedQuAD directory
-    # parser.parse_directory()
+    parser.parse_directory()
     
     # Or parse specific subdirectories (including those needing recovery)
     # parser.parse_specific_subdirectories(['10_MPlus_ADAM_QA', '11_MPlusDrugs_QA', '12_MPlusHerbsSupplements_QA'])
@@ -852,4 +852,4 @@ if __name__ == "__main__":
     # print(json.dumps(stats, indent=2))
     
     # Save to SQLite database
-    # parser.save_to_database("data/processed/unlabeled_qa.db")
+    parser.save_to_database("data/processed/unlabeled_qa.db")
