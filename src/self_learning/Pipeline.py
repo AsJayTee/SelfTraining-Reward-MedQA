@@ -106,9 +106,9 @@ class SelfLearningPipeline:
             
             # Build query
             query = """
-                SELECT question_id, question_text, question_type, 
-                       answer_text, answer_id, medical_focus, risk_level
-                FROM qa_pairs
+                SELECT id as question_id, question as question_text, question_type, 
+                    answer as answer_text, id as answer_id, medical_focus, risk_level
+                FROM unlabeled_qa
             """
             
             # Add filter if specified
@@ -513,6 +513,7 @@ if __name__ == "__main__":
     parser.add_argument("--db-path", type=str, default="data/processed/unlabeled_qa.db", help="Path to database")
     parser.add_argument("--output-dir", type=str, default="data/processed/self_learning", help="Output directory")
     parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-3B-Instruct", help="Model to use")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu)")
     
     args = parser.parse_args()
     
@@ -520,7 +521,8 @@ if __name__ == "__main__":
     pipeline = SelfLearningPipeline(
         db_path=args.db_path,
         output_dir=args.output_dir,
-        model_name=args.model
+        model_name=args.model,
+        device=args.device 
     )
     
     # Run based on arguments

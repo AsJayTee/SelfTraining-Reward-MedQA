@@ -13,30 +13,49 @@ class ResponseGenerator:
     """Generate confidence-calibrated answers aligned with ConfidenceEstimator."""
     
     def __init__(self, 
-                 model_name: str = "meta-llama/Llama-3.2-3B-Instruct",
-                 device: str = "cuda",
-                 max_memory: str = "13GB"):
+                model_name: str = "meta-llama/Llama-3.2-3B-Instruct",
+                device: str = "cuda",
+                max_memory: str = "13GB"):
         """Initialize with exact ConfidenceEstimator keyword lists."""
+        # Auto-detect device if CUDA not available
+        if device == "cuda" and not torch.cuda.is_available():
+            print("⚠️ CUDA not available, switching to CPU")
+            device = "cpu"
+        
         self.device = device
         self.model_name = model_name
         
-        print(f"Loading {model_name}...")
+        print(f"Loading {model_name} on {self.device}...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            max_memory={0: max_memory}
-        )
+        
+        # Load model differently based on device
+        if self.device == "cpu":
+            # CPU mode - no device_map, use float32
+            print("Loading model for CPU (this may take a while)...")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,  # CPU requires float32
+                low_cpu_mem_usage=True
+            )
+            self.model = self.model.to("cpu")
+        else:
+            # GPU mode - use device_map and float16
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                max_memory={0: max_memory}
+            )
+        
         self.model.eval()
-        print(f"Model loaded on {self.device}")
+        print(f"✓ Model loaded successfully on {self.device}")
         
         # EXACT keywords from ConfidenceEstimator.py
         self.uncertainty_keywords = {
             'strong': ['unknown', 'unclear', 'uncertain', 'unsure', 'not known',
-                      'insufficient evidence', 'conflicting evidence', 'controversial',
-                      'not well understood', 'poorly understood', 'inconclusive',
-                      'more research needed', 'difficult to determine'],
+                    'insufficient evidence', 'conflicting evidence', 'controversial',
+                    'not well understood', 'poorly understood', 'inconclusive',
+                    'more research needed', 'difficult to determine'],
             'moderate': ['may', 'might', 'could', 'possibly', 'perhaps', 'probably',
                         'likely', 'unlikely', 'generally', 'usually', 'typically',
                         'often', 'sometimes', 'tends to', 'appears to', 'seems to',
@@ -47,11 +66,11 @@ class ResponseGenerator:
         
         self.overconfident_keywords = {
             'extreme': ['always', 'never', 'definitely', 'certainly', 'absolutely',
-                       'without question', 'undoubtedly', 'guaranteed', 'will always',
-                       'will never', 'impossible', 'no exceptions', 'in all cases'],
+                    'without question', 'undoubtedly', 'guaranteed', 'will always',
+                    'will never', 'impossible', 'no exceptions', 'in all cases'],
             'strong': ['clearly', 'obviously', 'evidently', 'without doubt',
-                      'proven fact', 'established fact', 'well-known fact',
-                      'science shows', 'research proves'],
+                    'proven fact', 'established fact', 'well-known fact',
+                    'science shows', 'research proves'],
             'moderate': ['proven', 'established', 'confirmed', 'well-documented',
                         'standard', 'recognized', 'shows', 'demonstrates']
         }
@@ -475,9 +494,10 @@ Underconfident Answer:"""
         print(f"{'='*60}\n")
     
     def cleanup(self):
-        """Free up GPU memory."""
+        """Free up memory."""
         del self.model
         del self.tokenizer
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         gc.collect()
         print("Model cleaned up from memory")
