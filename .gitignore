@@ -1,2 +1,3 @@
 data/*
 src/self_learning/__pycache__/*
+!src/reward_model/
