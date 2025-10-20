@@ -1,70 +1,51 @@
+"""
+ConfidenceEstimator.py
+
+Estimates confidence scores for medical answers based on linguistic patterns.
+"""
+
 import json
-import numpy as np
 import re
+import numpy as np
+from pathlib import Path
+
 
 class ConfidenceEstimator:
-    """Estimates confidence level from medical answer text"""
+    """Estimates confidence scores for medical answers."""
     
-    def __init__(self):
-        self.base_confidence = 0.75
+    def __init__(self, base_confidence=0.5):
+        self.base_confidence = base_confidence
         
-        # Uncertainty keywords (reduce confidence)
-        self.uncertainty_keywords = {
-            'strong': ['unknown', 'unclear', 'uncertain', 'unsure', 'not known',
-                      'insufficient evidence', 'conflicting evidence', 'controversial',
-                      'not well understood', 'poorly understood', 'inconclusive',
-                      'more research needed', 'difficult to determine'],
-            'moderate': ['may', 'might', 'could', 'possibly', 'perhaps', 'probably',
-                        'likely', 'unlikely', 'generally', 'usually', 'typically',
-                        'often', 'sometimes', 'tends to', 'appears to', 'seems to',
-                        'suggests', 'indicates', 'can vary', 'may vary'],
-            'mild': ['consult your doctor', 'seek medical advice', 'discuss with',
-                    'individual results may vary', 'case by case', 'depends on']
-        }
+        self.uncertainty_patterns = [
+            r'\bmay\b', r'\bmight\b', r'\bcould\b', r'\bpossibly\b', 
+            r'\bperhaps\b', r'\bprobably\b', r'\blikely\b', r'\bunlikely\b',
+            r'\bsometimes\b', r'\boften\b', r'\brarely\b', r'\boccasionally\b',
+            r'\btypically\b', r'\busually\b', r'\bgenerally\b',
+            r'\buncertain\b', r'\bunknown\b', r'\bunclear\b'
+        ]
         
-        # Overconfident keywords (increase confidence)
-        self.overconfident_keywords = {
-            'extreme': ['always', 'never', 'definitely', 'certainly', 'absolutely',
-                       'without question', 'undoubtedly', 'guaranteed', 'will always',
-                       'will never', 'impossible', 'no exceptions', 'in all cases'],
-            'strong': ['clearly', 'obviously', 'evidently', 'without doubt',
-                      'proven fact', 'established fact', 'well-known fact',
-                      'science shows', 'research proves'],
-            'moderate': ['proven', 'established', 'confirmed', 'well-documented',
-                        'standard', 'recognized', 'shows', 'demonstrates']
-        }
-        
-        self.adjustments = {
-            'uncertainty': {'strong': -0.25, 'moderate': -0.12, 'mild': -0.08},
-            'overconfident': {'extreme': 0.20, 'strong': 0.15, 'moderate': 0.08}
-        }
+        self.overconfidence_patterns = [
+            r'\balways\b', r'\bnever\b', r'\bdefinitely\b', r'\bcertainly\b',
+            r'\bclearly\b', r'\bobviously\b', r'\bundoubtedly\b', r'\bwithout\s+doubt\b',
+            r'\babsolutely\b', r'\bguaranteed\b', r'\bwill\s+definitely\b',
+            r'\bmust\s+be\b', r'\bcan\s+only\s+be\b'
+        ]
     
-    def estimate_confidence(self, text: str) -> float:
-        """Estimate confidence score for text"""
-        text_lower = text.lower()
-        word_count = len(text.split())
+    def estimate_confidence(self, answer_text):
+        """Estimate confidence score for an answer."""
+        text_lower = answer_text.lower()
+        words = text_lower.split()
+        word_count = len(words)
         
-        # Length normalization factor (reference: 50 words)
-        length_factor = min(50 / max(word_count, 10), 1.0)
+        uncertainty_count = sum(1 for pattern in self.uncertainty_patterns 
+                               if re.search(pattern, text_lower))
+        uncertainty_penalty = -min(uncertainty_count * 0.05, 0.20)
         
-        # Calculate uncertainty penalty (with length normalization)
-        uncertainty_penalty = 0.0
-        for level, keywords in self.uncertainty_keywords.items():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    uncertainty_penalty += self.adjustments['uncertainty'][level]
+        overconfidence_count = sum(1 for pattern in self.overconfidence_patterns 
+                                  if re.search(pattern, text_lower))
+        overconfidence_boost = min(overconfidence_count * 0.03, 0.10)
         
-        uncertainty_penalty *= length_factor
-        
-        # Calculate overconfidence boost (no normalization)
-        overconfidence_boost = 0.0
-        for level, keywords in self.overconfident_keywords.items():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    overconfidence_boost += self.adjustments['overconfident'][level]
-        
-        # Text features
-        specificity_count = len(re.findall(r'\b\d+%|\b\d+\.\d+|\b\d+\s?(mg|ml|hours|days|weeks|months|years)', text_lower))
+        specificity_count = len(re.findall(r'\d+(\.\d+)?(%| mg| ml| hours| days| weeks| months| years)', text_lower))
         specificity_boost = min(specificity_count * 0.02, 0.08)
         
         medical_terms = ['diagnosis', 'treatment', 'symptoms', 'condition', 'syndrome',
@@ -74,7 +55,6 @@ class ConfidenceEstimator:
         term_density = term_count / word_count if word_count > 0 else 0
         medical_boost = min(term_density * 0.3, 0.05)
         
-        # Final score
         final_confidence = (self.base_confidence + 
                            uncertainty_penalty + 
                            overconfidence_boost + 
@@ -83,11 +63,13 @@ class ConfidenceEstimator:
         
         return round(np.clip(final_confidence, 0.05, 0.95), 4)
 
+
 def main():
     """Process MedQA data and add confidence scores"""
     
-    input_file = r"data\processed\test_qna.json"
-    output_file = r"data\processed\test_qna_with_confidence.json"
+    # Fixed: Use forward slashes and Path for cross-platform compatibility
+    input_file = Path("data/processed/test_qna.json")
+    output_file = Path("data/processed/test_qna_with_confidence.json")
     
     print("Processing MedQA data...")
     
@@ -114,6 +96,8 @@ def main():
     
     # Save data
     try:
+        # Ensure output directory exists
+        output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         print(f"Saved {total_answers} answers to {output_file}")
@@ -124,6 +108,7 @@ def main():
     # Show results
     print(f"Confidence range: {min(all_scores):.4f} to {max(all_scores):.4f}")
     print(f"Mean confidence: {np.mean(all_scores):.4f}")
+
 
 if __name__ == "__main__":
     main()

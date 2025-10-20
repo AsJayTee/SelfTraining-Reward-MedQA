@@ -14,6 +14,7 @@ from itertools import combinations
 from typing import List, Dict
 import numpy as np
 
+
 class PreferencePairCreator:
     """
     Creates preference pairs from medical Q&A data with risk-aware confidence handling.
@@ -75,107 +76,109 @@ class PreferencePairCreator:
         """
         Risk-aware tie-breaking when scores are equal or very close.
         
+        For high-risk questions: Prefer LOWER confidence (medical caution)
+        For low/medium-risk: Prefer HIGHER confidence (shows knowledge)
+        
         Args:
-            ans_a (Dict): First answer with score and confidence_score
-            ans_b (Dict): Second answer with score and confidence_score
-            risk_level (str): Risk level ("High Risk", "Medium Risk", "Low Risk")
+            ans_a, ans_b: Two answers with equal/similar scores
+            risk_level: Risk level of the question
             
         Returns:
-            Dict: {"preferred": Dict, "rejected": Dict}
+            Dict with 'preferred' and 'rejected' answers
         """
-        risk_level_clean = risk_level.replace(' Risk', '').lower()
+        conf_a = ans_a['confidence_score']
+        conf_b = ans_b['confidence_score']
         
-        if risk_level_clean == 'high':
-            # High-risk: prefer lower confidence (safer for medical decisions)
-            if ans_a['confidence_score'] < ans_b['confidence_score']:
-                return {"preferred": ans_a, "rejected": ans_b}
-            else:
-                return {"preferred": ans_b, "rejected": ans_a}
-                
-        elif risk_level_clean == 'medium':
-            # Medium-risk: slight preference for lower confidence if significant difference
-            conf_diff = abs(ans_a['confidence_score'] - ans_b['confidence_score'])
-            if conf_diff > 0.15:  # Significant confidence difference
-                if ans_a['confidence_score'] < ans_b['confidence_score']:
-                    return {"preferred": ans_a, "rejected": ans_b}
-                else:
-                    return {"preferred": ans_b, "rejected": ans_a}
-            else:
-                # Random choice when confidence is very similar
-                if random.random() > 0.5:
-                    return {"preferred": ans_a, "rejected": ans_b}
-                else:
-                    return {"preferred": ans_b, "rejected": ans_a}
-                    
-        else:  # low risk
-            # Low-risk: prefer higher confidence
-            if ans_a['confidence_score'] > ans_b['confidence_score']:
-                return {"preferred": ans_a, "rejected": ans_b}
-            else:
-                return {"preferred": ans_b, "rejected": ans_a}
+        if risk_level == 'high':
+            # High risk: prefer lower confidence (medical caution)
+            if conf_a < conf_b:
+                return {'preferred': ans_a, 'rejected': ans_b}
+            elif conf_b < conf_a:
+                return {'preferred': ans_b, 'rejected': ans_a}
+        else:
+            # Low/Medium risk: prefer higher confidence
+            if conf_a > conf_b:
+                return {'preferred': ans_a, 'rejected': ans_b}
+            elif conf_b > conf_a:
+                return {'preferred': ans_b, 'rejected': ans_a}
+        
+        # If confidences are equal, random choice
+        if random.random() < 0.5:
+            return {'preferred': ans_a, 'rejected': ans_b}
+        else:
+            return {'preferred': ans_b, 'rejected': ans_a}
     
     def calculate_confidence_penalty(self, preferred: Dict, rejected: Dict, risk_level: str) -> float:
         """
-        Calculate confidence penalty for high-risk scenarios with dangerous overconfidence.
+        Calculate confidence penalty for dangerous high-confidence + low-score answers.
         
         Penalty applied when:
-        - Question is high-risk
-        - Preferred answer has high confidence (>0.8) but low score (<3)
+        - High-risk question
+        - Preferred answer has lower score but HIGHER confidence
+        - This combination is particularly dangerous in medical contexts
         
         Args:
-            preferred (Dict): Preferred answer with score and confidence_score
-            rejected (Dict): Rejected answer
-            risk_level (str): Risk level of the question
+            preferred: Preferred answer dict
+            rejected: Rejected answer dict
+            risk_level: Risk level of the question
             
         Returns:
-            float: Confidence penalty (0.0 to ~0.135)
+            float: Confidence penalty (0.0 if no penalty applied)
         """
-        if not risk_level.lower().startswith('high'):
+        if risk_level != 'high':
             return 0.0
+        
+        # Check for dangerous pattern: lower score but higher confidence
+        if (preferred['score'] < rejected['score'] and 
+            preferred['confidence_score'] > rejected['confidence_score']):
             
-        # Penalize high-confidence, low-score answers in high-risk scenarios
-        if preferred['confidence_score'] > 0.8 and preferred['score'] < 3:
-            penalty = (preferred['confidence_score'] - 0.5) * 0.3
-            return max(0.0, penalty)
+            # Calculate penalty magnitude
+            score_gap = rejected['score'] - preferred['score']
+            conf_gap = preferred['confidence_score'] - rejected['confidence_score']
             
+            # Penalty scales with both gaps
+            penalty = score_gap * conf_gap * 0.5
+            return round(penalty, 4)
+        
         return 0.0
     
     def create_preference_pairs(self, question: Dict, answers: List[Dict], risk_level: str) -> List[Dict]:
         """
-        Create preference pairs for a single question.
+        Create preference pairs from a set of answers for a single question.
         
         Args:
-            question (Dict): Question data
-            answers (List[Dict]): List of answers with ratings and confidence scores
-            risk_level (str): Risk level for the question
+            question: Question dictionary
+            answers: List of answer dictionaries with ratings and confidence scores
+            risk_level: Risk level classification
             
         Returns:
-            List[Dict]: List of preference pairs
+            List of preference pair dictionaries
         """
-        if len(answers) < 2:
-            return []  # Need at least 2 answers to create pairs
-        
         pairs = []
         
-        # Add numeric scores to answers
-        processed_answers = []
-        for ans in answers:
-            processed_ans = ans.copy()
-            processed_ans['score'] = self.parse_rating(ans['rating'])
-            processed_answers.append(processed_ans)
+        # Parse scores for all answers
+        for answer in answers:
+            answer['score'] = self.parse_rating(answer['rating'])
         
-        # Generate all combinations of answer pairs
-        for ans_a, ans_b in combinations(processed_answers, 2):
-            score_diff = abs(ans_a['score'] - ans_b['score'])
+        # Generate all possible pairs
+        for ans_a, ans_b in combinations(answers, 2):
+            score_a = ans_a['score']
+            score_b = ans_b['score']
+            score_diff = abs(score_a - score_b)
             
-            # Determine preference logic
-            if score_diff >= self.min_score_diff:
-                # Clear preference based on score difference
-                if ans_a['score'] > ans_b['score']:
-                    preferred, rejected = ans_a, ans_b
-                else:
-                    preferred, rejected = ans_b, ans_a
-                    
+            # Skip if scores are too similar for clear preference
+            if score_diff < self.min_score_diff:
+                continue
+            
+            # Determine preferred and rejected based on score
+            if score_a > score_b:
+                preferred = ans_a
+                rejected = ans_b
+                creation_reason = 'score_diff'
+                confidence_penalty = self.calculate_confidence_penalty(preferred, rejected, risk_level)
+            elif score_b > score_a:
+                preferred = ans_b
+                rejected = ans_a
                 creation_reason = 'score_diff'
                 confidence_penalty = self.calculate_confidence_penalty(preferred, rejected, risk_level)
                 
@@ -304,10 +307,10 @@ def main():
     """
     Main execution function to process MedQuAD data and create preference pairs.
     """
-    # Configuration
-    input_file = "data/processed/test_qna_with_confidence.json"
-    output_file = "data/processed/preference_pairs.json"
-    stats_file = "data/processed/preference_pair_stats.json"
+    # Configuration - Fixed: Use forward slashes and Path for cross-platform compatibility
+    input_file = Path("data/processed/test_qna_with_confidence.json")
+    output_file = Path("data/processed/preference_pairs.json")
+    stats_file = Path("data/processed/preference_pair_stats.json")
     min_score_diff = 1.0  # Configurable threshold
     
     print("=== MedQuAD Preference Pair Creator ===")
