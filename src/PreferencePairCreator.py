@@ -89,7 +89,10 @@ class PreferencePairCreator:
         conf_a = ans_a['confidence_score']
         conf_b = ans_b['confidence_score']
         
-        if risk_level == 'high':
+        # Clean up risk level string
+        risk_level_clean = risk_level.replace(' Risk', '').lower()
+        
+        if risk_level_clean == 'high':
             # High risk: prefer lower confidence (medical caution)
             if conf_a < conf_b:
                 return {'preferred': ans_a, 'rejected': ans_b}
@@ -125,7 +128,10 @@ class PreferencePairCreator:
         Returns:
             float: Confidence penalty (0.0 if no penalty applied)
         """
-        if risk_level != 'high':
+        # Clean up risk level string
+        risk_level_clean = risk_level.replace(' Risk', '').lower()
+        
+        if risk_level_clean != 'high':
             return 0.0
         
         # Check for dangerous pattern: lower score but higher confidence
@@ -166,19 +172,16 @@ class PreferencePairCreator:
             score_b = ans_b['score']
             score_diff = abs(score_a - score_b)
             
-            # Skip if scores are too similar for clear preference
-            if score_diff < self.min_score_diff:
-                continue
-            
-            # Determine preferred and rejected based on score
-            if score_a > score_b:
-                preferred = ans_a
-                rejected = ans_b
-                creation_reason = 'score_diff'
-                confidence_penalty = self.calculate_confidence_penalty(preferred, rejected, risk_level)
-            elif score_b > score_a:
-                preferred = ans_b
-                rejected = ans_a
+            # Determine preference logic
+            if score_diff >= self.min_score_diff:
+                # Clear preference based on score difference
+                if score_a > score_b:
+                    preferred = ans_a
+                    rejected = ans_b
+                else:
+                    preferred = ans_b
+                    rejected = ans_a
+                    
                 creation_reason = 'score_diff'
                 confidence_penalty = self.calculate_confidence_penalty(preferred, rejected, risk_level)
                 
@@ -307,7 +310,7 @@ def main():
     """
     Main execution function to process MedQuAD data and create preference pairs.
     """
-    # Configuration - Fixed: Use forward slashes and Path for cross-platform compatibility
+    # Configuration - Fixed: Use Path for cross-platform compatibility
     input_file = Path("data/processed/test_qna_with_confidence.json")
     output_file = Path("data/processed/preference_pairs.json")
     stats_file = Path("data/processed/preference_pair_stats.json")
