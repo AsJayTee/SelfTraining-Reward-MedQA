@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-evaluate_reward_model.py
+evaluate_reward_model_v2.py
 
-Comprehensive evaluation pipeline for the trained Reward Model.
+Full evaluation pipeline for Reward Model calibration and performance.
 
 Evaluates:
 - Pairwise accuracy on preference pairs
-- Correlation with human/ground-truth scores
-- Calibration behavior across confidence levels
-- Penalty effects on high-risk overconfident answers
-- Optional agreement with external LLM judges
+- Spearman correlation with human/heuristic confidence
+- Calibration (ECE)
+- Penalty response on high-risk overconfidence
+- Risk-tier breakdown and summary plots
 
-Outputs metrics, plots, and CSV summaries.
-
-Author: DSA4213 Group 18
+Author: DSA4213 Group 18 (Revised)
 """
 
 import os
@@ -21,34 +19,50 @@ import json
 import torch
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
-from sklearn.metrics import brier_score_loss
-
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 
 # ==========================================================
-# 1️⃣ Load Data Utilities
+# 1️⃣ Utility Functions
 # ==========================================================
 def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
+def prepare_input(question, answer):
+    """Format question-answer pair for reward model."""
+    return f"Question: {question}\nAnswer: {answer}"
+
+
 # ==========================================================
-# 2️⃣ Model Scoring
+# 2️⃣ Reward Scoring
 # ==========================================================
-def compute_reward(model, tokenizer, question, answer, device="cuda"):
-    """Compute reward score for a question-answer pair."""
-    inputs = tokenizer(question, answer, truncation=True, return_tensors="pt").to(device)
-    with torch.no_grad():
+@torch.no_grad()
+def compute_reward_batch(model, tokenizer, qa_list, device="cuda", batch_size=8):
+    """Compute reward model scores efficiently in batches."""
+    model.eval()
+    all_scores = []
+
+    for i in tqdm(range(0, len(qa_list), batch_size), desc="Computing rewards"):
+        batch = qa_list[i : i + batch_size]
+        texts = [prepare_input(q, a) for q, a in batch]
+        inputs = tokenizer(
+            texts,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=512
+        ).to(device)
         outputs = model(**inputs)
-        score = outputs.logits.squeeze().item()
-    return score
+        scores = outputs.logits.squeeze(-1).detach().cpu().numpy().tolist()
+        all_scores.extend(scores)
 
-
+    return all_scores
+    
 # ==========================================================
 # 3️⃣ Evaluation Metrics
 # ==========================================================
