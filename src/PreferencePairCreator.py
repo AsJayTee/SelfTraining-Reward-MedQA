@@ -113,12 +113,16 @@ class PreferencePairCreator:
     
     def calculate_confidence_penalty(self, preferred: Dict, rejected: Dict, risk_level: str) -> float:
         """
-        Calculate confidence penalty for dangerous high-confidence + low-score answers.
+        Calculate confidence penalty for overconfident wrong answers.
+        
+        ADJUSTED FOR ACTUAL DATA DISTRIBUTION:
+        - Data shows all confidence scores are < 0.7
+        - "Overconfident" = top ~33% of distribution (> 0.5)
+        - "Wrong" = score ≤ 2 (bottom 96% of rejected answers)
         
         Penalty applied when:
-        - High-risk question
-        - Preferred answer has lower score but HIGHER confidence
-        - This combination is particularly dangerous in medical contexts
+        - Rejected answer has LOW score (≤2) but RELATIVELY HIGH confidence (>0.5)
+        - Scaled by risk level
         
         Args:
             preferred: Preferred answer dict
@@ -128,22 +132,43 @@ class PreferencePairCreator:
         Returns:
             float: Confidence penalty (0.0 if no penalty applied)
         """
+        # Risk-based penalty multipliers
+        risk_multipliers = {
+            'high': 3.0,    # Highest penalty for high-risk scenarios
+            'medium': 2.0,  # Moderate penalty  
+            'low': 1.0      # Base penalty
+        }
+        
         # Clean up risk level string
         risk_level_clean = risk_level.replace(' Risk', '').lower()
+        risk_weight = risk_multipliers.get(risk_level_clean, 1.0)
         
-        if risk_level_clean != 'high':
-            return 0.0
+        # Define thresholds based on YOUR data distribution
+        LOW_SCORE_THRESHOLD = 2       # Score ≤ 2 (covers 96% of rejected answers)
+        CONFIDENCE_THRESHOLD = 0.5    # Confidence > 0.5 (top 33% of distribution)
         
-        # Check for dangerous pattern: lower score but higher confidence
-        if (preferred['score'] < rejected['score'] and 
-            preferred['confidence_score'] > rejected['confidence_score']):
+        # Calculate score gap (must have clear preference)
+        score_gap = preferred['score'] - rejected['score']
+        
+        # Apply penalty when:
+        # 1. There's a clear quality difference (gap ≥ 1)
+        # 2. Rejected answer is low quality (score ≤ 2)
+        # 3. BUT rejected answer is still confident (> 0.5, which is top third)
+        if (score_gap >= 1 and 
+            rejected['score'] <= LOW_SCORE_THRESHOLD and 
+            rejected['confidence_score'] > CONFIDENCE_THRESHOLD):
             
             # Calculate penalty magnitude
-            score_gap = rejected['score'] - preferred['score']
-            conf_gap = preferred['confidence_score'] - rejected['confidence_score']
+            # Scales with:
+            # - How confident the wrong answer is (above the threshold)
+            # - Risk level of the question
             
-            # Penalty scales with both gaps
-            penalty = score_gap * conf_gap * 0.5
+            confidence_excess = rejected['confidence_score'] - CONFIDENCE_THRESHOLD
+            
+            # Simple penalty: risk_weight × confidence_excess × 10
+            # (×10 to scale it to reasonable magnitudes)
+            penalty = risk_weight * confidence_excess * 10.0
+            
             return round(penalty, 4)
         
         return 0.0
