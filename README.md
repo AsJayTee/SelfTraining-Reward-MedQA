@@ -334,10 +334,9 @@ src/
 ├── reward_model/
 │   └── RewardModelTrainer.ipynb        # Trains LLaMA-based reward model with overconfidence penalties
 │
-└── self_learning/
-    ├── Pipeline.py                     # Orchestrates self-training data generation pipeline
-    ├── ResponseGenerator.py            # Generates confidence-calibrated better/worse answer pairs using LLaMA
-    └── Evaluation_for_reward_model.py  # Evaluates model: accuracy, ECE, penalty response, risk-tier metrics
+└── evals/
+    ├── Evaluation_for_reward_model.py  # Evaluates model: accuracy, ECE, penalty response, risk-tier metrics
+    └── reward_model_safety_eval.ipynb  # Evaluates model: high-confidence error rates, calibration plots, risk-tier heatmaps
 ```
 
 ### Data Directories
