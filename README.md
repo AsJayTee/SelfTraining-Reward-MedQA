@@ -146,7 +146,7 @@ This makes overconfident wrong answers **costly**, especially in high-risk medic
 - LiveQA Medical Task TREC 2017 test questions for evaluation
 
 ### Model Architecture
-We implement a generative reward model based on **LLaMA-3.1-8B-Instruct** that outputs both preference labels and confidence scores for medical Q&A pairs.
+We implement a generative reward model based on **LLaMA-3.2-3B-Instruct** that outputs both preference labels and confidence scores for medical Q&A pairs.
 
 ### Key Features
 1. **Risk-Stratified Medical Questions**: Questions categorized into High/Medium/Low risk based on clinical impact
@@ -163,8 +163,8 @@ Our approach follows a systematic pipeline from raw data to trained reward model
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        RAW DATA SOURCES                                │
-│  • MedQuAD: 47,457 NIH-verified Q&A pairs (unlabeled)                  │
-│  • TREC 2017: 2,479 expert-judged test answers (labeled)               │
+│  • MedQuAD: 2,479 expert-judged test answers                           │
+│  • TREC 2017: 104 test questions (XML format)                          │
 └────────────────────────┬───────────────────────────────────────────────┘
                          │
                          ▼
@@ -205,7 +205,7 @@ Our approach follows a systematic pipeline from raw data to trained reward model
 ┌────────────────────────────────────────────────────────────────────────┐
 │  STEP 4: REWARD MODEL TRAINING (RewardModelTrainer.ipynb)              │
 │  ────────────────────────────────────────────────────────────          │
-│  Base: LLaMA-3.1-8B-Instruct                                           │
+│  Base: LLaMA-3.2-3B-Instruct                                           │
 │  Loss: Standard preference loss + confidence penalty                   │
 │  Training: Preference pairs with risk-weighted penalties               │
 └────────────────────────┬───────────────────────────────────────────────┘
@@ -379,7 +379,7 @@ outputs/
 ### Training & Self-Learning
 | File | Description |
 |------|-------------|
-| `reward_model/RewardModelTrainer.ipynb` | Trains LLaMA-3.1-8B reward model using preference pairs with risk-weighted overconfidence penalty loss |
+| `reward_model/RewardModelTrainer.ipynb` | Trains LLaMA-3.2-3B reward model using preference pairs with risk-weighted overconfidence penalty loss |
 
 ### Evaluation
 | File | Description |
@@ -418,6 +418,12 @@ This project uses publicly available NIH medical datasets. Please cite the origi
 ```
 Asma Ben Abacha and Dina Demner-Fushman. A Question-Entailment Approach to Question Answering. 
 BMC Bioinformatics, 2019.
+```
+
+**TREC LiveQA Citation:**
+```
+Asma Ben Abacha, Eugene Agichtein, Yuval Pinter and Dina Demner-Fushman. Overview of the Medical Question Answering Task at TREC 2017 LiveQA. 
+TREC 2017, 2017.
 ```
 
 ---
